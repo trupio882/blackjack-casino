@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  blackjack:
+    build: .
+    container_name: blackjack-casino
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/app
