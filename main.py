@@ -1,48 +1,135 @@
-from game import Black_jack
+from game import BlackJack
+from save_manager import SaveManager
 from balance_manager import Deposit
 from player import Player
 from typing import Dict, Optional, List
+from ui import ConsoleUI
 
 class CasinoApp:
     """Main casino application – manages players and tables."""
+    DB: SaveManager = SaveManager()
+    ui: ConsoleUI = ConsoleUI()
 
-    def __init__(self, initial_balance: int = 500) -> None:
-        self.deposit = Deposit(initial_balance)
-
+    def __init__(self) -> None:
+        self.deposit = Deposit(500)
         # Tables with different limits
-        self.tables: Dict[str, Black_jack] = {
-            'low': Black_jack(10, 1000, 5),
-            'mid': Black_jack(1000, 10000, 5),
-            'high': Black_jack(10000, 100000, 5)
+        self.tables: Dict[str, BlackJack] = {
+            'low': BlackJack(10, 1000, 5),
+            'mid': BlackJack(1000, 10000, 5),
+            'high': BlackJack(10000, 100000, 5)
         }
-
         self.players: List[Player] = []
-        self.current_player: Optional[Player] = None
 
     def run(self) -> None:
         """Start the application."""
-        print("Welcome to Blackjack Casino!")
-        self._add_first_player()
-        self._main_menu()
+        self.ui.start_message()
 
+        if self.DB.get_all_sessions():
+            if self._show_session():
+                return
+        else:
+            self.create_first_session()
+
+        self._main_menu()
+   
+    def _show_session(self) -> bool:
+        """Show session management menu."""
+        while True:
+            res = self.ui.show_action_with_session()
+
+            if res == "0":
+                return True
+            elif res == "1":
+                self.create_session()
+                return False
+            elif res == "2":
+                session = self._choice_session()
+
+                if session is None:
+                    continue
+
+                session_id = session["id"]
+                data = self.DB.get_players_by_session(session_id)
+                players = [
+                    Player(row["name"], int(row["balance"])) 
+                    for row in data
+                ]
+                    
+                if not players:
+                    self._add_first_player()
+                
+                self.players = players
+                return False
+            elif res == "3":
+                session = self._choice_session()
+
+                if session is None:
+                    continue
+
+                session_id = session["id"]
+                self.DB.delete_session(session_id)         
+    
+    def create_first_session(self) -> None:
+        """Create first session when no sessions exist."""
+        session_name = self.ui.input_first_session_name()
+        self.DB.create_session(session_name)
+        self._add_first_player()
+    
+    def create_session(self) -> None:
+        """Create new session with name validation."""
+        while True:
+            session_name = self.ui.input_session_name()
+
+            if session_name == "0":
+                self.ui.show_cancelled_session()
+                return
+
+            try:
+                self.DB.create_session(session_name)
+                self.ui.show_session_create(session_name)
+                break
+            except ValueError as e:
+                self.ui.show_error_in_create_session(e)
+        
+        self._add_first_player()
+    
+    def _choice_session(self) -> Optional[Dict]:
+        """Select a session from available list."""
+        sessions = self.DB.get_all_sessions()
+
+        if not sessions:
+            self.ui.show_no_session()
+            self.create_first_session()
+            return None
+        
+        choice = self.ui.show_choice_session(sessions)
+
+        if choice == 0:
+            return
+        
+        return sessions[choice-1]
+        
     def _add_first_player(self) -> None:
         """Add the first player on startup."""
-        name = input("Enter first player's name: ").strip()
+        name = self.ui.input_first_player_name()
+
         if name:
             player = Player(name)
         else:
             player = Player("Player")
-            print("Default player 'Player' created.")
+            self.ui.show_defoult_player_name()
+
+        self.DB.add_player_in_session(player)
         self.players.append(player)
-        self.current_player = player
 
     def _main_menu(self) -> None:
         """Main menu loop."""
         while True:
-            self._show_menu()
-            choice = input("\nYour choice: ").strip()
+            self.ui.show_menu(self.tables)
+            choice = self.ui.input_choice_menu()
+
             if choice == "0":
-                self._exit_app()
+                self.ui.show_exit(self.players)
                 break
             elif choice == "1":
                 self._play_at_table('low')
@@ -57,106 +144,59 @@ class CasinoApp:
             elif choice == "6":
                 self._remove_player()
             else:
-                print("Invalid input. Choose 0-6.")
-                input("Press Enter to continue...")
-
-    def _show_menu(self) -> None:
-        """Display a nicely formatted menu."""
-        print("\n" + "┌" + "─" * 58 + "┐")
-        print("│" + " " * 22 + "MAIN MENU" + " " * 27 + "│")
-        print("├" + "─" * 58 + "┤")
-        count = 1
-
-        for key, table in self.tables.items():
-            label = f"TABLE {key.upper()}"
-            print(f"│ [{count}] {label:<11} │ {table.bet_manager.min_bet:>8}"\
-                  f" – {table.bet_manager.max_bet:<8} │".ljust(59) + "│")
-            count += 1
-
-        print("├" + "─" * 58 + "┤")
-        print("│ [4] ADD PLAYER" + " " * 43 + "│")
-        print("│ [5] DEPOSIT BALANCE" + " " * 38 + "│")
-        print("│ [6] REMOVE PLAYER" + " " * 40 + "│")
-        print("├" + "─" * 58 + "┤")
-        print("│ [0] EXIT" + " " * 49 + "│")
-        print("└" + "─" * 58 + "┘")
-
-        if self.current_player:
-            print(f"\nCurrent player: {self.current_player.name} | Balance: {self.current_player.balance}")
+                self.ui.show_invalid_choice()
 
     def _play_at_table(self, table_key: str) -> None:
         """Start a game at the chosen table."""
         table = self.tables[table_key]
+        table.players.clear()
+
         for player in self.players:
             table.add_player(player)
 
-        print(f"\nPlaying at {table_key.upper()} table")
-        print(f"Limits: {table.bet_manager.min_bet} – {table.bet_manager.max_bet}")
+        self.ui.show_add_player_in_table(table, table_key)
         table.start_game()
 
     def _add_player(self) -> None:
         """Add a new player."""
-        while True:
-            name = input("Enter new player's name (or 0 to cancel): ").strip()
-            if name == "0":
-                return
-            if not name:
-                print("Name cannot be empty.")
-                continue
-            if any(p.name == name for p in self.players):
-                print(f"Player '{name}' already exists.")
-                continue
-            player = Player(name)
-            self.players.append(player)
-            print(f"Player {name} added.")
-            return
+        name = self.ui.input_new_player_name(self.players)
+        player = Player(name)
+        self.DB.add_player_in_session(player)
+        self.players.append(player)
+        self.ui.show_player_add(name)
 
     def _deposit_balance(self) -> None:
         """Deposit money to a selected player."""
         if not self.players:
-            print("No players to deposit.")
+            self.ui.show_no_player_to_deposite()
             return
+        
         player = self._select_player()
+
         if player:
             self.deposit.deposit(player)
 
     def _remove_player(self) -> None:
         """Remove a player (cannot remove the last one)."""
         if len(self.players) <= 1:
-            print("Cannot remove the only player.")
+            self.ui.show_cannot_remove()
             return
+        
         player = self._select_player()
+
         if player:
             self.players.remove(player)
-            print(f"Player {player.name} removed.")
-            if self.current_player == player:
-                self.current_player = self.players[0] if self.players else None
+            self.DB.delete_player(player.name)
+            self.ui.show_removed_player()
 
     def _select_player(self) -> Optional[Player]:
-        """Select a player from the list."""
-        print("\nPlayer list:")
-        for i, p in enumerate(self.players):
-            print(f"  [{i}] {p.name} ({p.balance})")
-        print(f"  [{len(self.players)}] Cancel")
+        choice = self.ui.show_player_list(self.players)
 
-        while True:
-            try:
-                choice = int(input("Select number: "))
-                if 0 <= choice < len(self.players):
-                    return self.players[choice]
-                if choice == len(self.players):
-                    return None
-                print("Invalid number.")
-            except ValueError:
-                print("Enter an integer.")
-
-    def _exit_app(self) -> None:
-        """Exit the application and show final balances."""
-        print("\nThank you for playing! Goodbye!")
-        if self.players:
-            print("\nFinal balances:")
-            for p in self.players:
-                print(f"  {p.name}: {p.balance}₽")
+        if 0 <= choice < len(self.players):
+            return self.players[choice]
+        
+        if choice == -1:
+            return None       
 
 
 def main():

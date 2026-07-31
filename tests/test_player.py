@@ -1,6 +1,6 @@
 import pytest
 from player import Player, Hand
-from deck_for_black_jack import Card
+from blackjack_deck import Card
 
 class TestPlayer:
     def test_player_creation(self):

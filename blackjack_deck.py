@@ -7,8 +7,8 @@ class Card:
     """A single playing card for Blackjack."""
 
     def __init__(self, suit: str, rank: str) -> None:
-        self.suit = suit
-        self.rank = rank
+        self.suit: str = suit
+        self.rank: str = rank
 
     def __str__(self) -> str:
         return f"{self.rank}{self.suit}"

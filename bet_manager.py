@@ -1,40 +1,36 @@
+from ui import ConsoleUI
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from player import Player, Hand
 
-
 class BetManager:
     """Handles betting: placing, doubling, insurance, and payouts."""
+    ui: ConsoleUI = ConsoleUI()
 
     def __init__(self, min_bet: int = 10, max_bet: int = 1000) -> None:
         self.min_bet: int = min_bet
         self.max_bet: int = max_bet
     
-    def place_initial_bet(self, player: 'Player') -> None:
-        """Ask the player for an initial bet and deduct it."""
-        if player.balance < self.min_bet:
-            raise ValueError(f"Insufficient funds. Minimum bet: {self.min_bet}")
-        
-        while True:
-            try:
-                amount = int(input(f"\n{player.name} (balance {player.balance}) "
-                                   f"Bet [{self.min_bet}..{self.max_bet}]: "))
-                if amount < self.min_bet:
-                    print(f"Minimum bet is {self.min_bet}")
-                elif amount > self.max_bet:
-                    print(f"Maximum bet is {self.max_bet}")
-                else:
-                    break
-            except ValueError:
-                print("Please enter an integer.")
-        
-        self.withdraw(player, amount)
-        player.hands.tail.bet = amount
+    def bet(self, player: 'Player', amount: int) -> bool:
+        """Place a bet for the player."""
+        if amount < self.min_bet:
+            self.ui.show_min_bet(self.min_bet)
+            return False
+        elif amount > self.max_bet:
+            self.ui.show_max_bet(self.max_bet)
+            return False
+        elif amount > player.balance:
+            self.ui.enough_balance(player.balance)
+            return False
+        else:
+            player.withdraw(amount)
+            player.hands.last_hand.bet = amount
+            return True 
     
-    def black_jack(self, player: 'Player', hand: 'Hand') -> None:
+    def blackjack(self, player: 'Player', hand: 'Hand') -> None:
         """Payout 3:2 for a blackjack."""
         win = hand.bet + hand.bet * 3 // 2
-        print(f"{player.name}, blackjack! You win {win}")
+        self.ui.show_blackjack_win(player.name, win)
         player.deposit(win)
     
     def resolve_main_bet(self, player: 'Player', hand: 'Hand', win: bool, tie: bool = False) -> None:
@@ -43,31 +39,25 @@ class BetManager:
         win_bet = bet*2
 
         if win:
-            self.deposit(player, win_bet)
-            print(f"{player.name} wins {win_bet}!")
+            player.deposit(win_bet)
+            self.ui.show_win(player.name, win_bet)
         elif tie:
-            print("Push, bet returned.")
-            self.deposit(player, bet)
+            self.ui.show_tie(player.name, bet)
+            player.deposit(bet)
         else:
-            print(f"{player.name} loses {bet}.")
-    
-    def withdraw(self, player: 'Player', bet: int) -> None:
-        player.withdraw(bet)
-    
-    def deposit(self, player: 'Player', bet: int) -> None:
-        player.deposit(bet)
+            self.ui.show_lose(player.name, bet)
     
     def withdraw_insurance(self, player: 'Player', hand: 'Hand') -> None:
         """Deduct insurance premium (half the bet)."""
         bet = hand.bet
-        self.withdraw(player, bet//2)
+        player.withdraw(bet//2)
         hand.insurance = True
 
     def deposit_insurance(self, player: 'Player', hand: 'Hand') -> None:
         """Payout insurance (2:1)."""
         win = hand.bet
-        self.deposit(player, win)
-        print(f"{player.name}, insurance pays {win}")
+        player.deposit(win)
+        self.ui.show_pushout_insurance(player.name, win)
 
     def can_bet_for_insurance(self, player: 'Player', hand: 'Hand') -> bool:
         return hand.bet // 2 <= player.balance
@@ -85,6 +75,37 @@ class BetManager:
         if hand.bet > player.balance:
             raise ValueError(f"Insufficient funds to double. Need: {hand.bet}, have: {player.balance}")
         
-        self.withdraw(player, bet)
+        player.withdraw(bet)
         hand.bet = bet * 2
-     
+    
+    def withdraw_split(self, player: 'Player', hand: 'Hand') -> None:
+        if hand.bet <= 0:
+            raise ValueError("Bet must be positive.")
+        
+        if hand.bet > player.balance:
+            raise ValueError(f"Insufficient funds to double. Need: {hand.bet}, have: {player.balance}")
+        
+        bet = hand.bet
+        player.withdraw(bet)
+    
+    @property
+    def min_bet(self) -> int:
+        return self._min_bet
+    
+    @min_bet.setter
+    def min_bet(self, amount: int) -> None:
+        if not (isinstance(amount, int) and amount > 0):
+            raise ValueError
+        
+        self._min_bet = amount
+    
+    @property
+    def max_bet(self) -> int:
+        return self._max_bet
+    
+    @max_bet.setter
+    def max_bet(self, amount: int) -> None:
+        if not (isinstance(amount, int) and amount > 0):
+            raise ValueError
+        
+        self._max_bet = amount

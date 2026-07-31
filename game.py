@@ -1,10 +1,12 @@
-from typing import List, Optional
-from deck_for_black_jack import Deck, Card
+from typing import List
+from blackjack_deck import Deck
 from bet_manager import BetManager
+from ui import ConsoleUI
 from player import Player, Hand
 
-class Black_jack:
+class BlackJack:
     """Main Blackjack game logic."""
+    ui = ConsoleUI()
 
     def __init__(self, min_bet: int = 10, max_bet: int = 1000, table_hands_limit: int = 5) -> None:
         self.table_hands_limit: int = table_hands_limit
@@ -19,6 +21,7 @@ class Black_jack:
 
         # Reset all hands
         for player in self.players:
+            player.in_game = True
             player.reset_hand()
 
         self.dealer.reset_hand()
@@ -26,24 +29,24 @@ class Black_jack:
         # Collect bets and offer extra hands
         for player in self.players:
             if player.balance < self.bet_manager.min_bet:
-                print(f"{player.name} cannot play: balance {player.balance} < min bet {self.bet_manager.min_bet}")
-                return
-            
-            self.bet_manager.place_initial_bet(player)
+                self.ui.show_cannot_play(player, self.bet_manager.min_bet)
+                player.in_game = False
+                continue
+
+            self._initial_bet(player)
 
             # Additional hands (splits)
             while True:
                 total_hands = sum(len(p.hands) for p in self.players)
+                
                 if player.balance >= self.bet_manager.min_bet and total_hands + 1 <= self.table_hands_limit:
-                    choice = input(f"{player.name}, add another hand? (y/n): ").strip().lower()
+                    choice = self.ui.input_add_hand(player)
 
                     if choice == 'y':
                         player.hands.add_hand()
-                        self.bet_manager.place_initial_bet(player)
+                        self._initial_bet(player)
                     elif choice == 'n':
                         break
-                    else:
-                        print("Please enter 'y' or 'n'.")
                 else:
                     break       
         
@@ -51,40 +54,46 @@ class Black_jack:
             hand = player.hands.hand
 
             while hand:
-                for _ in range(2):
+                for _ in range(2):    
                     hand.add_card(self.deck.card_deal())
                 
-                hand = hand.next
+                hand = hand.next_hand
         
         for _ in range(2):
             self.dealer.get_first_hand().add_card(self.deck.card_deal())
 
         # Insurance if dealer shows an Ace
-        if self.dealer.get_first_hand().cards[0].rank == "A":
+        if self.dealer.get_first_hand().get_first_card().rank == "A":
             for player in self.players:
+                if not player.in_game:
+                    continue
+
                 hand_num = 1
                 hand = player.hands.hand
 
                 while hand:
-                    self.insurance(player, hand, hand_num)
-                    hand = hand.next
+                    self._insurance(player, hand, hand_num)
+                    hand = hand.next_hand
                     hand_num += 1
             
-            if self.dealer.get_first_hand().is_black_jack():
+            if self.dealer.get_first_hand().is_blackjack():
                 for player in self.players:
-                    self.check_winner(player) 
+                    self._check_winner(player) 
                     
-                self.ask_continue()
+                self._ask_continue()
                 return
 
         # Players' turns
         for player in self.players:
+            if not player.in_game:
+                continue
+
             hand = player.hands.hand
             hand_num = 1
 
             while hand:
-                self.play_hand(player, hand, hand_num)
-                hand = hand.next
+                self._play_hand(player, hand, hand_num)
+                hand = hand.next_hand
                 hand_num += 1
 
         # Dealer draws until 17+
@@ -95,36 +104,45 @@ class Black_jack:
 
         # Determine winners
         for player in self.players:
-            self.check_winner(player) 
+            if not player.in_game:
+                    continue
             
-        self.ask_continue()
+            self._check_winner(player) 
+            
+        self._ask_continue()
         return
     
-    def insurance(self, player: Player, hand: Hand, hand_num: int) -> None:
+    def _initial_bet(self, player: Player) -> None:
+        """Prompt the player to place an initial bet."""
+        if player.balance < self.bet_manager.min_bet:
+            raise ValueError(f"Insufficient funds. Minimum bet: {self.bet_manager.min_bet}")
+        
+        amount = self.ui.input_initial_bet(player, self.bet_manager)
+        
+        if self.bet_manager.bet(player, amount):
+            return
+    
+    def _insurance(self, player: Player, hand: Hand, hand_num: int) -> None:
         """Offer insurance to the player."""
         while True:
-            self.show_hand(player, hand, hand_num)
+            self.ui.show_hand(self.dealer, player, hand, hand_num)
 
             if not self.bet_manager.can_bet_for_insurance(player, hand):
-                print(f"{player.name}, hand {hand_num}: not enough money for insurance.")
+                self.ui.show_cannot_buy_insurance(player, hand_num)
                 return
             
-            choice = input(f"Buy insurance for {hand.bet//2}? (y/n): ").strip().lower()
+            choice = self.ui.input_buy_insurance(hand.bet//2)
 
             if choice == "y":
                 self.bet_manager.withdraw_insurance(player, hand)
                 return
             elif choice == "n":
                 return
-            else:
-                print("Enter 'y' or 'n'.")
 
-    def play_hand(self, player: Player, hand: Hand, hand_num: int) -> None:
+    def _play_hand(self, player: Player, hand: Hand, hand_num: int) -> None:
         """Handle a single hand's turn."""
-        self.show_hand(player, hand, hand_num, show_dealer=False)
-
         if hand.calculate_card() == 21:
-            print("Blackjack!")
+            self.ui.show_lable_blackjack()
             return
         
         can_bet_for_double_split = self.bet_manager.can_bet_for_split_double(player, hand)
@@ -134,144 +152,108 @@ class Black_jack:
         split_txt = f", Split(1), for {bet}" if can_bet_for_double_split and can_split else ""
 
         while True:
-            action = input(
-                f"Hand {hand_num}:\n"
-                f"Hit(h), Stand(s){double_txt}{split_txt}\n"
-                "Your choice: "
-            ).strip().lower()
+            self.ui.show_hand(self.dealer, player, hand, hand_num, show_dealer=False)
+            action = self.ui.input_play_hand(hand_num, double_txt, split_txt)
 
-            if action.lower() == "h":
+            if action == "h":
                 hand.add_card(self.deck.card_deal())
-                self.player_action(player, hand, hand_num)
+                self._player_action(player, hand, hand_num)
                 return
-            elif action.lower() == "d" and double_txt:
+            elif action == "d" and double_txt:
                 self.bet_manager.double_bet(player, hand)
                 hand.add_card(self.deck.card_deal())
-                self.show_hand(player, hand, hand_num, show_dealer=False)
+                self.ui.show_hand(self.dealer, player, hand, hand_num, show_dealer=False)
                 return
-            elif action.lower() == "1" and split_txt:
+            elif action == "1" and split_txt:
                 if not can_split:
-                    print("This hand cannot be split.")
-                    continue
+                    raise ValueError
                     
-                self.bet_manager.withdraw(player, bet)
+                self.bet_manager.withdraw_split(player, hand)
                 split_hand = player.create_split_hand(hand)
-                
                 hand.add_card(self.deck.card_deal())
                 split_hand.add_card(self.deck.card_deal())
-
-                self.play_hand(player, hand, hand_num)
+                self._play_hand(player, hand, hand_num)
                 return
             elif action.lower() == "s":
                 return
             else:
-                print("\nInvalid input. Available: h, s, d, 1.\n")
+                self.ui.show_invalid_hand_action()
 
-    def player_action(self, player: Player, hand: Hand, hand_num: int) -> None:
+    def _player_action(self, player: Player, hand: Hand, hand_num: int) -> None:
         """Hit/Stand loop for a hand."""
-        self.show_hand(player, hand, hand_num, show_dealer=False)
+        self.ui.show_hand(self.dealer, player, hand, hand_num, show_dealer=False)
 
         while hand.calculate_card() <= 21:
             if hand.calculate_card() == 21:
-                print(f"{player.name} ({hand_num}) have 21")
-            while True:
-                action = input("Hit(h) or Stand(s): ").strip().lower()
+                self.ui.show_have_21(player, hand_num)
+                return
 
-                if action == "h":
-                    hand.add_card(self.deck.card_deal())
-                    self.show_hand(player, hand, hand_num, show_dealer=False)
-                    break
-                elif action == "s":
-                    return
-                else:
-                    print("Enter 'h' or 's'.")             
-     
-    def show_hand(self, player: Player, hand: Hand, hand_num: int, show_dealer: bool = False) -> None:
-        """Display the player's hand and optionally the dealer's hand."""
-        player_cards = hand.display_hand()
-        player_score = hand.calculate_card()
-        print(f"\n{player.name} (hand {hand_num}): {player_cards} | Score: {player_score}")
-        dealer_hand = self.dealer.get_first_hand()
+            action = self.ui.input_hit_or_stop()
 
-        if show_dealer:
-            dealer_cards = dealer_hand.display_hand()
-            dealer_score = dealer_hand.calculate_card()
-            print(f"Dealer: {dealer_cards} | Score: {dealer_score}")
-        else:
-            first = str(dealer_hand.cards[0]) if dealer_hand.cards else "??"
-            print(f"Dealer: {first}, [hidden card]")
+            if action == "h":
+                hand.add_card(self.deck.card_deal())
+                self.ui.show_hand(self.dealer, player, hand, hand_num, show_dealer=False)
+            elif action == "s":
+                return       
 
     def _dealer_have_blackjack(self, player: Player, hand: Hand) -> None:
         """Handle case when dealer has blackjack."""
         if hand.insurance:
             self.bet_manager.deposit_insurance(player, hand)
         
-        if hand.is_black_jack():
+        if hand.is_blackjack():
             self.bet_manager.resolve_main_bet(player, hand, False, tie=True)
-            print("Push (both have blackjack).")
+            self.ui.show_both_blackjack()
         else:
             self.bet_manager.resolve_main_bet(player, hand, False)
-            print("Dealer has blackjack. You lose.")
+            self.ui.show_lose_deaker_has_blackjack()
 
-    def check_winner(self, player: Player) -> None:
+    def _check_winner(self, player: Player) -> None:
         """Evaluate all hands of a player against the dealer."""
         dealer_score = self.dealer.get_first_hand().calculate_card()
-        print("\nFinal results:")
-
+        self.ui.show_lable_final_res()
         hand = player.hands.hand
         hand_num = 1
 
         while hand:
-            self.show_hand(player, hand, hand_num, show_dealer=True)
+            self.ui.show_hand(self.dealer, player, hand, hand_num, show_dealer=True)
             card_score = hand.calculate_card()
 
-            if self.dealer.get_first_hand().is_black_jack():
+            if self.dealer.get_first_hand().is_blackjack():
                 self._dealer_have_blackjack(player, hand)
-            elif hand.is_black_jack():
-                self.bet_manager.black_jack(player, hand)
+            elif hand.is_blackjack():
+                self.bet_manager.blackjack(player, hand)
             elif hand.insurance:
-                print(f"Insurance lost (lost {hand.bet//2}).")
+                self.ui.show_insurance_lose(hand.bet//2)
             else:
-                print(f"{player.name} score: {card_score}")
-                print(f"{self.dealer.name}'s score: {dealer_score}")
+                self.ui.show_final_res(player.name, self.dealer.name, card_score, dealer_score)
 
                 if card_score > 21:
-                    print(f"{player.name} busted! Dealer win")
+                    self.ui.show_player_bust(player.name)
                     self.bet_manager.resolve_main_bet(player, hand, False)
                 elif dealer_score > 21 or card_score > dealer_score:
-                    self.bet_manager.resolve_main_bet(player, hand, True)
-                    print(f"{player.name} win!!!")
+                    self.bet_manager.resolve_main_bet(player, hand, True)    
                 elif card_score < dealer_score:
                     self.bet_manager.resolve_main_bet(player, hand, False)
-                    print(f"{player.name} lose. Dealer win")
                 else:
                     self.bet_manager.resolve_main_bet(player, hand, False, tie=True)
-                    print("It's a Tie")
             
-            hand = hand.next
+            hand = hand.next_hand
             hand_num += 1
         
         player.reset_hand()
 
 
-    def ask_continue(self) -> None:
+    def _ask_continue(self) -> None:
         """Ask if players want to continue playing."""
-        while True:
-            continue_game = input("\nPlay again? (y/n): ").strip().lower()
+        continue_game = self.ui.ask_continue()
 
-            if continue_game == "y":
-                for player in self.players:
-                    player.reset_hand()
-
-                self.dealer.reset_hand()
-                self.start_game()
-                return
-            elif continue_game == "n":
-                self.players = []
-                print("Thanks for playing!")
-                return
-            else:
-                print("Enter 'y' or 'n'.")
+        if continue_game == "y":
+            self.start_game()
+            return
+        elif continue_game == "n":
+            self.players = []
+            return
     
     def add_player(self, player: Player) -> None:
         """Add a player to the table."""

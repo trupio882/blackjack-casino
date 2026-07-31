@@ -1,5 +1,5 @@
 import pytest
-from deck_for_black_jack import Deck, Card
+from blackjack_deck import Deck, Card
 
 class TestDeck:
     def test_deck_initialization(self):

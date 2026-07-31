@@ -1,7 +1,9 @@
 from player import Player
+from ui import ConsoleUI
 
 class Deposit:
     """Simulate depositing money via card details."""
+    ui = ConsoleUI()
 
     def __init__(self, amount: int = 500) -> None:
         self.amount: int = amount
@@ -10,12 +12,12 @@ class Deposit:
         """Process deposit after entering card details."""
         if not isinstance(player, Player):
             raise TypeError("player must be a Player instance")
-
-        print(f"\n{self.amount} will be charged to your card.")
+        
+        self.ui.show_start_message_app_balance(self.amount)
 
         # Card number
         while True:
-            num_card = input("\nEnter card number (16 digits) or 0 to cancel: ").strip()
+            num_card = self.ui.input_num_card()
 
             if num_card == "0":
                 return
@@ -28,23 +30,23 @@ class Deposit:
             if len(num_card) == 16 and num_card.isdigit():
                 break
 
-            print("Card number must be exactly 16 digits.\n")
+            self.ui.show_num_card_error()
         
         # Expiry date
         while True:
-            date_card = input("\nEnter expiry date (MM/YY) or 0 to cancel: ").strip()
+            date_card = self.ui.input_card_date()
 
             if date_card == "0":
                 return
-            
+
             if all(map(lambda x: len(x) == 2 and x.isdigit(), date_card.split("/"))):
                 break
 
-            print("Date must be in format MM/YY (e.g., 12/25).")
+            self.ui.show_card_date_error()
         
         # CVV
         while True:
-            cvv = input("\nEnter CVV (3 digits) or 0 to cancel: ").strip()
+            cvv = self.ui.input_cvv()
 
             if cvv == "0":
                 return
@@ -52,10 +54,10 @@ class Deposit:
             if len(cvv) == 3 and cvv.isdigit():
                 break
 
-            print("CVV must be 3 digits.")
+            self.ui.show_cvv_error()
 
         player.deposit(self.amount)
-        print(f"{player.name}'s balance increased by {self.amount}")
+        self.ui.show_finall_message_app_balance(player, self.amount)
     
     @property
     def amount(self) -> int:
